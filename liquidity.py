@@ -4,6 +4,13 @@ import time
 
 w3 = Web3(Web3.HTTPProvider("https://base-mainnet.blastapi.io/18899f62-4e25-4260-aec0-d8c8ca09f056"))
 
+# Check if we're connected to the Ethereum node
+if not w3.isConnected():
+    print("Failed to connect to Ethereum node.")
+    exit()  # Exit the script if we can't connect
+else:
+    print("Connected to Ethereum node.")
+
 # Define the topics for the Mint event
 mint_event_topic = "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f"
 
@@ -14,9 +21,9 @@ latest_block = w3.eth.block_number
 logfile = "liquidity_logs.txt"
 
 while True:
-    new_block = w3.eth.block_number
-    if new_block != latest_block:
-        try:
+    try:
+        new_block = w3.eth.block_number
+        if new_block != latest_block:
             # Fetch the new block and get the transactions
             block = w3.eth.get_block(new_block, full_transactions=True)
             print(f"--- Checking Block #{new_block} ---")
@@ -38,7 +45,10 @@ while True:
 
             latest_block = new_block
 
-        except exceptions.BlockNotFound:
-            print(f"Block {new_block} not found. Skipping...")
+    except exceptions.BlockNotFound:
+        print(f"Block {new_block} not found. Skipping...")
+    except Exception as e:
+        print(f"Error: {e}")
+        time.sleep(5)  # Sleep a bit longer in case of an error to avoid rapid error logs
 
     time.sleep(1)
