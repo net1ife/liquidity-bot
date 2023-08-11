@@ -1,64 +1,74 @@
-import web3
-from web3 import Web3, exceptions
-import time
-import logging
-from logging.handlers import RotatingFileHandler
+import requests
+from textblob import TextBlob
+from nltk.tokenize import word_tokenize
+from nltk.classify import NaiveBayesClassifier
+from nltk.probability import FreqDist
 
-# Configuration
-NODE_URL = "https://base-mainnet.blastapi.io/18899f62-4e25-4260-aec0-d8c8ca09f056"
-MINT_EVENT_TOPIC = "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f"
-LOG_FILE = "liquidity_logs.txt"
-MAX_RETRIES = 3
-SLEEP_INTERVAL = 5
+# Constants
+NEWSAPI_KEY = "YOUR_NEWSAPI_KEY"
+NEWSAPI_ENDPOINT = "https://newsapi.org/v2/everything"
 
-# Set up logging
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-handler = RotatingFileHandler(LOG_FILE, maxBytes=5*1024*1024, backupCount=2)  # 5 MB per file, two backup logs
-logger.addHandler(handler)
+def fetch_articles(ticker):
+    """Fetches news articles for a given stock ticker."""
+    query = f"{ticker} stock"
+    params = {
+        'q': query,
+        'apiKey': NEWSAPI_KEY,
+        'language': 'en',
+        'sortBy': 'relevancy',
+        'pageSize': 100
+    }
 
-def initialize_web3(url):
-    w3 = Web3(Web3.HTTPProvider(url))
-    if not w3.isConnected():
-        raise ConnectionError("Failed to connect to Ethereum node.")
-    return w3
+    response = requests.get(NEWSAPI_ENDPOINT, params=params)
+    response.raise_for_status()  # Raise exception for any response errors
 
-def log_liquidity_event(tx):
-    log_msg = f"Liquidity added in transaction {tx.hash.hex()} by address {tx['from']}"
-    print(log_msg)
-    logger.info(log_msg)
+    articles = response.json().get('articles', [])
+    return [article['description'] or article['title'] for article in articles if article['description'] or article['title']]
+
+def get_sentiment(text):
+    """Returns the sentiment of a text based on its polarity."""
+    analysis = TextBlob(text)
+    if analysis.sentiment.polarity > 0.1:
+        return 'positive'
+    elif analysis.sentiment.polarity < -0.1:
+        return 'negative'
+    else:
+        return 'neutral'
+
+def get_word_features(documents, num_features=2000):
+    """Returns top n word features."""
+    all_words = FreqDist(w.lower() for words, _ in documents for w in words)
+    return list(all_words.keys())[:num_features]
+
+def document_features(document, word_features):
+    """Generate features for a document."""
+    document_words = set(document)
+    return {f'contains({word})': (word in document_words) for word in word_features}
 
 def main():
-    w3 = initialize_web3(NODE_URL)
-    latest_block = w3.eth.block_number
-    retries = 0
+    # Fetch articles for a ticker
+    ticker = input("Enter the stock ticker for which you want to fetch news articles: ")
 
-    while retries < MAX_RETRIES:
-        try:
-            new_block = w3.eth.block_number
-            if new_block != latest_block:
-                block = w3.eth.get_block(new_block, full_transactions=True)
-                print(f"--- Checking Block #{new_block} ---")
+    try:
+        articles = fetch_articles(ticker)
 
-                for tx in block.transactions:
-                    receipt = w3.eth.get_transaction_receipt(tx.hash)
-                    for log in receipt.logs:
-                        if MINT_EVENT_TOPIC in log.topics:
-                            log_liquidity_event(tx)
+        # Auto-label the first N articles using TextBlob
+        N = 10
+        print("\nAuto-labeling the first few articles using TextBlob:")
+        documents = [(word_tokenize(article), get_sentiment(article)) for article in articles[:N]]
 
-                latest_block = new_block
-                retries = 0  # Reset retries if block processed successfully
+        word_features = get_word_features(documents)
+        featuresets = [(document_features(d, word_features), c) for (d, c) in documents]
+        classifier = NaiveBayesClassifier.train(featuresets)
 
-        except exceptions.BlockNotFound:
-            print(f"Block {new_block} not found. Skipping...")
-        except Exception as e:
-            print(f"Error: {e}")
-            retries += 1
-            time.sleep(SLEEP_INTERVAL)
+        # Analyze the remaining articles
+        for article in articles[N:]:
+            words = word_tokenize(article)
+            sentiment = classifier.classify(document_features(words, word_features))
+            print(f"\nArticle: {article}\nPredicted Sentiment: {sentiment}\n{'-' * 50}")
 
-        time.sleep(1)
+    except requests.RequestException as e:
+        print(f"Error fetching news: {e}")
 
-    print("Maximum retries reached. Exiting...")
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
