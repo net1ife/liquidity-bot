@@ -1,74 +1,44 @@
-import requests
-from textblob import TextBlob
-from nltk.tokenize import word_tokenize
-from nltk.classify import NaiveBayesClassifier
-from nltk.probability import FreqDist
+import web3
+from web3 import Web3, exceptions
+import time
 
-# Constants
-NEWSAPI_KEY = "YOUR_NEWSAPI_KEY"
-NEWSAPI_ENDPOINT = "https://newsapi.org/v2/everything"
+w3 = Web3(Web3.HTTPProvider("https://base-mainnet.blastapi.io/18899f62-4e25-4260-aec0-d8c8ca09f056"))
 
-def fetch_articles(ticker):
-    """Fetches news articles for a given stock ticker."""
-    query = f"{ticker} stock"
-    params = {
-        'q': query,
-        'apiKey': NEWSAPI_KEY,
-        'language': 'en',
-        'sortBy': 'relevancy',
-        'pageSize': 100
-    }
+# Define the topics for the Mint event
+mint_event_topic = "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f"
 
-    response = requests.get(NEWSAPI_ENDPOINT, params=params)
-    response.raise_for_status()  # Raise exception for any response errors
+# Get the latest block
+latest_block = w3.eth.block_number
 
-    articles = response.json().get('articles', [])
-    return [article['description'] or article['title'] for article in articles if article['description'] or article['title']]
+# Define the file to store the logs
+logfile = "liquidity_logs.txt"
 
-def get_sentiment(text):
-    """Returns the sentiment of a text based on its polarity."""
-    analysis = TextBlob(text)
-    if analysis.sentiment.polarity > 0.1:
-        return 'positive'
-    elif analysis.sentiment.polarity < -0.1:
-        return 'negative'
-    else:
-        return 'neutral'
+while True:
+    new_block = w3.eth.block_number
+    if new_block != latest_block:
+        try:
+            # Fetch the new block and get the transactions
+            block = w3.eth.get_block(new_block, full_transactions=True)
+            print(f"--- Checking Block #{new_block} ---")
 
-def get_word_features(documents, num_features=2000):
-    """Returns top n word features."""
-    all_words = FreqDist(w.lower() for words, _ in documents for w in words)
-    return list(all_words.keys())[:num_features]
+            # Iterate through all transactions in the block
+            for tx in block.transactions:
+                # Get the receipt to access the logs
+                receipt = w3.eth.get_transaction_receipt(tx.hash)
+                # Iterate through each log
+                for log in receipt.logs:
+                    # Check if this log's topics contain the Mint event topic
+                    if mint_event_topic in log.topics:
+                        log_msg = f"Liquidity added in transaction {tx.hash.hex()} by address {tx['from']}"
+                        print(log_msg)
 
-def document_features(document, word_features):
-    """Generate features for a document."""
-    document_words = set(document)
-    return {f'contains({word})': (word in document_words) for word in word_features}
+                        # Also write it into the log file
+                        with open(logfile, "a") as f:
+                            f.write(log_msg + "\n")
 
-def main():
-    # Fetch articles for a ticker
-    ticker = input("Enter the stock ticker for which you want to fetch news articles: ")
+            latest_block = new_block
 
-    try:
-        articles = fetch_articles(ticker)
+        except exceptions.BlockNotFound:
+            print(f"Block {new_block} not found. Skipping...")
 
-        # Auto-label the first N articles using TextBlob
-        N = 10
-        print("\nAuto-labeling the first few articles using TextBlob:")
-        documents = [(word_tokenize(article), get_sentiment(article)) for article in articles[:N]]
-
-        word_features = get_word_features(documents)
-        featuresets = [(document_features(d, word_features), c) for (d, c) in documents]
-        classifier = NaiveBayesClassifier.train(featuresets)
-
-        # Analyze the remaining articles
-        for article in articles[N:]:
-            words = word_tokenize(article)
-            sentiment = classifier.classify(document_features(words, word_features))
-            print(f"\nArticle: {article}\nPredicted Sentiment: {sentiment}\n{'-' * 50}")
-
-    except requests.RequestException as e:
-        print(f"Error fetching news: {e}")
-
-if __name__ == "__main__":
-    main()
+    time.sleep(1)
