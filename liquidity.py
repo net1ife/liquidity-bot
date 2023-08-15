@@ -28,7 +28,7 @@ while True:
                 # Iterate through each log
                 for log in receipt.logs:
                     # Check if this log's topics contain the Mint event topic
-                    if mint_event_topic in log.topics:
+                    if mint_event_topic in log['topics']:
                         log_msg = f"Liquidity added in transaction {tx.hash.hex()} by address {tx['from']}"
                         print(log_msg)
 
